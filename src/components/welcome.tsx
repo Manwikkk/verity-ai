@@ -43,10 +43,10 @@ export function Welcome() {
           </div>
           <div>
             <p className="mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-              Workspace · {ws.name}
+              Workspace · {ws?.name ?? "Loading"}
             </p>
             <p className="mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground/70 mt-0.5">
-              {ws.docs.toLocaleString()} documents indexed
+              {(ws?.docs ?? 0).toLocaleString()} documents indexed
             </p>
           </div>
         </div>

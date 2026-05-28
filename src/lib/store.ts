@@ -1,7 +1,20 @@
 import { useShallow } from "zustand/react/shallow";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, createJSONStorage } from "zustand/middleware";
 import { setToken, clearToken, type AuthResult } from "./api";
+
+// SSR-safe localStorage wrapper — returns a no-op storage on the server
+// to prevent "localStorage is not defined" errors during TanStack Start SSR.
+const ssrSafeStorage = createJSONStorage(() => {
+  if (typeof window === "undefined") {
+    return {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+    };
+  }
+  return localStorage;
+});
 
 export interface Workspace {
   id: string;
@@ -137,6 +150,7 @@ export const useApp = create<AppState>()(
     }),
     { 
       name: "verity-app-v2",
+      storage: ssrSafeStorage,
       partialize: (state) => ({ 
         isLoggedIn: state.isLoggedIn, 
         user: state.user,

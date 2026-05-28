@@ -41,30 +41,9 @@ function Index() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const statusTimersRef = useRef<Record<string, number>>({});
 
-  if (!isLoggedIn) {
-    return (
-      <LoggedOutLanding
-        guestLoading={guestLoading}
-        onContinueWithoutAccount={async () => {
-          setGuestLoading(true);
-          try {
-            const result = await auth.guest();
-            handleGuestSuccess(result);
-            toast.success("Continuing without an account");
-          } catch (error) {
-            toast.error(
-              error instanceof Error ? error.message : "Unable to start guest mode right now.",
-            );
-          } finally {
-            setGuestLoading(false);
-          }
-        }}
-      />
-    );
-  }
-
   // Fetch chat history
   useEffect(() => {
+    if (!isLoggedIn) return;
     if (activeChatId && ws && !isGuest && isLoggedIn) {
       chatsApi
         .get(ws.id, activeChatId)
@@ -86,92 +65,6 @@ function Index() {
       setMessages([]);
     }
   }, [activeChatId, ws, isGuest, isLoggedIn]);
-
-  const send = (text: string) => {
-    if (!ws) return;
-
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-
-    const tempChatId = activeChatId;
-    const userMsg: Message = {
-      id: crypto.randomUUID(),
-      role: "user",
-      content: text,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
-
-    const asstMsgId = crypto.randomUUID();
-    const asstMsg: Message = {
-      id: asstMsgId,
-      role: "assistant",
-      content: "",
-      isLoading: true,
-      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-    };
-
-    setMessages((prev) => [...prev, userMsg, asstMsg]);
-
-    const controller = streamQuery(
-      ws.id,
-      text,
-      (event) => {
-        if (event.type === "token") {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === asstMsgId
-                ? { ...m, content: m.content + event.data.token, isLoading: false }
-                : m,
-            ),
-          );
-        } else if (event.type === "sources") {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === asstMsgId
-                ? { ...m, sources: event.data.sources, isLoading: false }
-                : m,
-            ),
-          );
-          if (event.data.chatId && !tempChatId && !isGuest) {
-            // New chat created on backend, add to state
-            addChat({
-              id: event.data.chatId,
-              workspaceId: ws.id,
-              title: text.slice(0, 60),
-              createdAt: Date.now(),
-              pinned: false,
-            });
-          }
-        } else if (event.type === "error") {
-          toast.error("Generation failed", { description: event.data.message });
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === asstMsgId
-                ? {
-                    ...m,
-                    content: m.content + "\n\n**Error:** " + event.data.message,
-                    isLoading: false,
-                  }
-                : m,
-            ),
-          );
-        } else if (event.type === "done") {
-          setMessages((prev) =>
-            prev.map((m) => (m.id === asstMsgId ? { ...m, isLoading: false } : m)),
-          );
-          abortControllerRef.current = null;
-        }
-      },
-      {
-        chatId: tempChatId ?? undefined,
-        providerId: provider,
-        isIncognito: false,
-      },
-    );
-
-    abortControllerRef.current = controller;
-  };
 
   const handleFiles = useCallback(
     async (files: FileList | File[]) => {
@@ -265,6 +158,7 @@ function Index() {
 
   // page-level drag and drop
   useEffect(() => {
+    if (!isLoggedIn) return;
     const onDragOver = (e: DragEvent) => {
       if (e.dataTransfer?.types?.includes("Files")) {
         e.preventDefault();
@@ -287,7 +181,115 @@ function Index() {
       window.removeEventListener("dragleave", onDragLeave);
       window.removeEventListener("drop", onDrop);
     };
-  }, [handleFiles]);
+  }, [handleFiles, isLoggedIn]);
+
+  if (!isLoggedIn) {
+    return (
+      <LoggedOutLanding
+        guestLoading={guestLoading}
+        onContinueWithoutAccount={async () => {
+          setGuestLoading(true);
+          try {
+            const result = await auth.guest();
+            handleGuestSuccess(result);
+            toast.success("Continuing without an account");
+          } catch (error) {
+            toast.error(
+              error instanceof Error ? error.message : "Unable to start guest mode right now.",
+            );
+          } finally {
+            setGuestLoading(false);
+          }
+        }}
+      />
+    );
+  }
+
+  const send = (text: string) => {
+    if (!ws) return;
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    const tempChatId = activeChatId;
+    const userMsg: Message = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: text,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+
+    const asstMsgId = crypto.randomUUID();
+    const asstMsg: Message = {
+      id: asstMsgId,
+      role: "assistant",
+      content: "",
+      isLoading: true,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+
+    setMessages((prev) => [...prev, userMsg, asstMsg]);
+
+    const controller = streamQuery(
+      ws.id,
+      text,
+      (event) => {
+        if (event.type === "token") {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === asstMsgId
+                ? { ...m, content: m.content + event.data.token, isLoading: false }
+                : m,
+            ),
+          );
+        } else if (event.type === "sources") {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === asstMsgId
+                ? { ...m, sources: event.data.sources, isLoading: false }
+                : m,
+            ),
+          );
+          if (event.data.chatId && !tempChatId && !isGuest) {
+            // New chat created on backend, add to state
+            addChat({
+              id: event.data.chatId,
+              workspaceId: ws.id,
+              title: text.slice(0, 60),
+              createdAt: Date.now(),
+              pinned: false,
+            });
+          }
+        } else if (event.type === "error") {
+          toast.error("Generation failed", { description: event.data.message });
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === asstMsgId
+                ? {
+                    ...m,
+                    content: m.content + "\n\n**Error:** " + event.data.message,
+                    isLoading: false,
+                  }
+                : m,
+            ),
+          );
+        } else if (event.type === "done") {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === asstMsgId ? { ...m, isLoading: false } : m)),
+          );
+          abortControllerRef.current = null;
+        }
+      },
+      {
+        chatId: tempChatId ?? undefined,
+        providerId: provider,
+        isIncognito: false,
+      },
+    );
+
+    abortControllerRef.current = controller;
+  };
 
   return (
     <AppShell>

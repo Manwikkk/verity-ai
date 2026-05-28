@@ -8,6 +8,7 @@ const API_BASE = import.meta.env.VITE_API_URL || "/api";
 /** Get the stored auth token. */
 function getToken(): string | null {
   try {
+    if (typeof window === "undefined") return null;
     const raw = localStorage.getItem("verity-auth-token");
     return raw;
   } catch {
@@ -17,11 +18,13 @@ function getToken(): string | null {
 
 /** Set the auth token. */
 export function setToken(token: string): void {
+  if (typeof window === "undefined") return;
   localStorage.setItem("verity-auth-token", token);
 }
 
 /** Clear the auth token. */
 export function clearToken(): void {
+  if (typeof window === "undefined") return;
   localStorage.removeItem("verity-auth-token");
 }
 
