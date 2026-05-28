@@ -1,4 +1,4 @@
-import { FileText, ChevronRight, Copy, ThumbsUp, ThumbsDown, MoreVertical, Pin, Download, Trash2 } from "lucide-react";
+import { FileText, ChevronRight, Copy, ThumbsUp, ThumbsDown, MoreVertical, Pin, Download, Trash2, Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -8,7 +8,33 @@ export interface Message {
   role: "user" | "assistant";
   content: string;
   sources?: { title: string; section: string; confidence: number }[];
+  isLoading?: boolean;
+  attachments?: {
+    id: string;
+    name: string;
+    size?: string;
+    status?: number;
+    statusLabel?: string;
+    chunks?: number;
+    pages?: number;
+  }[];
   timestamp: string;
+}
+
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+  }
 }
 
 export function MessageThread({
@@ -47,8 +73,8 @@ function ChatMessageMenu({ messageContent }: { messageContent: string }) {
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(messageContent);
+  const handleCopy = async () => {
+    await copyText(messageContent);
     setOpen(false);
     toast.success("Copied to clipboard");
   };
@@ -138,8 +164,51 @@ function UserMessage({ message }: { message: Message }) {
         </div>
       </div>
       <div className="max-w-[85%] rounded-lg bg-surface-raised hairline px-4 py-2.5 text-[14px] text-foreground leading-relaxed">
+        {message.attachments && message.attachments.length > 0 && (
+          <div className="mb-2 space-y-1.5">
+            {message.attachments.map((doc) => (
+              <DocumentChip key={doc.id} doc={doc} />
+            ))}
+          </div>
+        )}
         {message.content}
       </div>
+    </div>
+  );
+}
+
+function DocumentChip({
+  doc,
+}: {
+  doc: NonNullable<Message["attachments"]>[number];
+}) {
+  const ready = doc.status === 6;
+  const failed = typeof doc.status === "number" && doc.status < 0;
+  const label = ready
+    ? "Ready"
+    : failed
+      ? "Failed"
+      : doc.statusLabel || "Processing";
+
+  return (
+    <div className="flex items-center gap-2 rounded-md hairline bg-background/60 px-2.5 py-2 text-left">
+      <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" strokeWidth={1.75} />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[12.5px] font-medium text-foreground">{doc.name}</div>
+        <div className="mono text-[10px] uppercase tracking-wider text-muted-foreground">
+          {doc.size || "PDF"} {doc.pages ? `· ${doc.pages} pages` : ""} {doc.chunks ? `· ${doc.chunks} chunks` : ""}
+        </div>
+      </div>
+      <span className={cn("inline-flex items-center gap-1.5 mono text-[10px] uppercase tracking-wider", ready ? "text-success" : failed ? "text-destructive" : "text-warning")}>
+        {ready ? (
+          <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+        ) : failed ? (
+          <AlertCircle className="h-3.5 w-3.5" strokeWidth={1.75} />
+        ) : (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={1.75} />
+        )}
+        {label}
+      </span>
     </div>
   );
 }
@@ -151,6 +220,20 @@ function AssistantMessage({
   message: Message;
   onOpenSource?: (s: { title: string; section: string; confidence: number }) => void;
 }) {
+  const loading = message.isLoading || message.content.length === 0;
+  const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
+
+  const handleCopy = async () => {
+    await copyText(message.content);
+    toast.success("Copied answer");
+  };
+
+  const handleFeedback = (value: "up" | "down") => {
+    setFeedback(value);
+    toast.success(value === "up" ? "Marked helpful" : "Marked not helpful");
+    window.setTimeout(() => setFeedback(null), 900);
+  };
+
   return (
     <article className="group">
       <div className="flex items-center gap-2 mb-3">
@@ -159,18 +242,23 @@ function AssistantMessage({
         </div>
         <span className="text-[12.5px] font-medium text-foreground">Verity</span>
         <span className="mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground flex-1">
-          · Retrieved {message.sources?.length ?? 0} sources · {message.timestamp}
+          · {loading ? "Generating answer" : `Retrieved ${message.sources?.length ?? 0} sources`} · {message.timestamp}
         </span>
-        <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-          <ChatMessageMenu messageContent={message.content} />
-        </div>
+        {!loading && (
+          <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+            <ChatMessageMenu messageContent={message.content} />
+          </div>
+        )}
       </div>
 
-      <div className="prose-block text-[14px] leading-[1.7] text-foreground/95 space-y-3">
-        {message.content.split("\n\n").map((p, i) => (
-          <p key={i}>{p}</p>
-        ))}
-      </div>
+      {loading ? (
+        <div className="flex items-center gap-2 rounded-lg hairline bg-surface px-3 py-2.5 text-[13px] text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} />
+          Reading workspace documents and drafting a cited answer...
+        </div>
+      ) : (
+        <FormattedAnswer content={message.content} />
+      )}
 
       {message.sources && message.sources.length > 0 && (
         <div className="mt-5">
@@ -208,12 +296,55 @@ function AssistantMessage({
         </div>
       )}
 
-      <div className="mt-4 flex items-center gap-1">
-        <ActionButton icon={Copy} label="Copy" />
-        <ActionButton icon={ThumbsUp} />
-        <ActionButton icon={ThumbsDown} />
-      </div>
+      {!loading && (
+        <div className="mt-4 flex items-center gap-1">
+          <ActionButton icon={Copy} label="Copy" onClick={handleCopy} />
+          <ActionButton icon={ThumbsUp} active={feedback === "up"} onClick={() => handleFeedback("up")} />
+          <ActionButton icon={ThumbsDown} active={feedback === "down"} onClick={() => handleFeedback("down")} />
+        </div>
+      )}
     </article>
+  );
+}
+
+function FormattedAnswer({ content }: { content: string }) {
+  const blocks = content.split(/\n{2,}/).filter(Boolean);
+
+  return (
+    <div className="prose-block text-[14px] leading-[1.7] text-foreground/95 space-y-3">
+      {blocks.map((block, i) => {
+        const lines = block.split("\n").filter(Boolean);
+        if (lines.length > 0 && lines.every((line) => /^[-*]\s+/.test(line.trim()))) {
+          return (
+            <ul key={i} className="list-disc space-y-1.5 pl-5">
+              {lines.map((line, j) => (
+                <li key={j}>{line.replace(/^[-*]\s+/, "")}</li>
+              ))}
+            </ul>
+          );
+        }
+
+        if (lines.length > 0 && lines.every((line) => /^\d+\.\s+/.test(line.trim()))) {
+          return (
+            <ol key={i} className="list-decimal space-y-1.5 pl-5">
+              {lines.map((line, j) => (
+                <li key={j}>{line.replace(/^\d+\.\s+/, "")}</li>
+              ))}
+            </ol>
+          );
+        }
+
+        if (/^#{1,3}\s+/.test(block.trim())) {
+          return (
+            <h3 key={i} className="pt-1 text-[15px] font-semibold text-foreground">
+              {block.replace(/^#{1,3}\s+/, "")}
+            </h3>
+          );
+        }
+
+        return <p key={i}>{block}</p>;
+      })}
+    </div>
   );
 }
 
@@ -235,12 +366,22 @@ function ConfidenceBar({ value }: { value: number }) {
 function ActionButton({
   icon: Icon,
   label,
+  active,
+  onClick,
 }: {
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   label?: string;
+  active?: boolean;
+  onClick?: () => void;
 }) {
   return (
-    <button className="h-7 px-2 inline-flex items-center gap-1.5 rounded-md text-[11.5px] text-muted-foreground hover:bg-accent hover:text-foreground transition-all duration-200">
+    <button
+      onClick={onClick}
+      className={cn(
+        "h-7 px-2 inline-flex items-center gap-1.5 rounded-md text-[11.5px] text-muted-foreground hover:bg-accent hover:text-foreground transition-all duration-200",
+        active && "scale-110 bg-primary/15 text-primary ring-1 ring-primary/25",
+      )}
+    >
       <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
       {label}
     </button>

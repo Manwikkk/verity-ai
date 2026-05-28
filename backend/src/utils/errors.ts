@@ -1,0 +1,56 @@
+/** Custom error classes for structured API error responses. */
+
+export class AppError extends Error {
+  public readonly statusCode: number;
+  public readonly code: string;
+
+  constructor(message: string, statusCode: number, code: string) {
+    super(message);
+    this.name = "AppError";
+    this.statusCode = statusCode;
+    this.code = code;
+  }
+}
+
+export class UnauthorizedError extends AppError {
+  constructor(message = "Authentication required") {
+    super(message, 401, "UNAUTHORIZED");
+  }
+}
+
+export class ForbiddenError extends AppError {
+  constructor(message = "Access denied") {
+    super(message, 403, "FORBIDDEN");
+  }
+}
+
+export class NotFoundError extends AppError {
+  constructor(resource = "Resource") {
+    super(`${resource} not found`, 404, "NOT_FOUND");
+  }
+}
+
+export class ValidationError extends AppError {
+  constructor(message = "Validation failed") {
+    super(message, 400, "VALIDATION_ERROR");
+  }
+}
+
+export class ConflictError extends AppError {
+  constructor(message = "Resource already exists") {
+    super(message, 409, "CONFLICT");
+  }
+}
+
+export class TenantMismatchError extends ForbiddenError {
+  constructor() {
+    super("Cross-tenant access denied");
+    this.name = "TenantMismatchError";
+  }
+}
+
+export class GuardrailError extends AppError {
+  constructor(message = "Request blocked by safety guardrails", public readonly reason: string) {
+    super(message, 422, "GUARDRAIL_BLOCKED");
+  }
+}

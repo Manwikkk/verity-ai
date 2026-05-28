@@ -1,0 +1,234 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgvector(map: "vector")]
+}
+
+// ─── Enums ───
+
+enum Role {
+  SUPER_ADMIN
+  TENANT_ADMIN
+  TENANT_USER
+  GUEST
+}
+
+enum DocumentStatus {
+  UPLOADING
+  EXTRACTING_TEXT
+  CHUNKING
+  EMBEDDING
+  INDEXING
+  SECURING
+  READY
+  FAILED
+}
+
+// ─── Core Models ───
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  tag       String   @db.VarChar(8)
+  env       String   @default("prod")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  memberships     TenantMembership[]
+  documents       Document[]
+  chats           Chat[]
+  providerConfigs ProviderConfig[]
+  auditLogs       AuditLog[]
+  queryLogs       QueryLog[]
+
+  @@map("tenants")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  passwordHash String?  @map("password_hash")
+  googleId     String?  @unique @map("google_id")
+  avatarUrl    String?  @map("avatar_url")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  memberships  TenantMembership[]
+  chats        Chat[]
+  chatMessages ChatMessage[]
+  auditLogs    AuditLog[]
+  queryLogs    QueryLog[]
+
+  @@map("users")
+}
+
+model TenantMembership {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  tenantId  String   @map("tenant_id")
+  role      Role     @default(TENANT_USER)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tenantId])
+  @@map("tenant_memberships")
+}
+
+// ─── Documents & Chunks ───
+
+model Document {
+  id          String         @id @default(uuid())
+  tenantId    String         @map("tenant_id")
+  name        String
+  mimeType    String         @map("mime_type")
+  sizeBytes   Int            @map("size_bytes")
+  pageCount   Int            @default(0) @map("page_count")
+  owner       String         @default("Unknown")
+  status      DocumentStatus @default(UPLOADING)
+  chunkCount  Int            @default(0) @map("chunk_count")
+  storagePath String?        @map("storage_path")
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
+
+  tenant Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  chunks DocumentChunk[]
+
+  @@index([tenantId])
+  @@map("documents")
+}
+
+model DocumentChunk {
+  id         String   @id @default(uuid())
+  documentId String   @map("document_id")
+  tenantId   String   @map("tenant_id")
+  content    String
+  pageNumber Int?     @map("page_number")
+  chunkIndex Int      @map("chunk_index")
+  tokenCount Int      @default(0) @map("token_count")
+  embedding  Unsupported("vector(384)")?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([documentId])
+  @@map("document_chunks")
+}
+
+// ─── Chats ───
+
+model Chat {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  userId    String?  @map("user_id")
+  title     String
+  pinned    Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user     User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  messages ChatMessage[]
+
+  @@index([tenantId])
+  @@index([userId])
+  @@map("chats")
+}
+
+model ChatMessage {
+  id         String   @id @default(uuid())
+  chatId     String   @map("chat_id")
+  userId     String?  @map("user_id")
+  role       String   // "user" | "assistant"
+  content    String
+  sources    Json?
+  confidence Float?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  chat Chat  @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([chatId])
+  @@map("chat_messages")
+}
+
+// ─── Provider Config ───
+
+model ProviderConfig {
+  id              String   @id @default(uuid())
+  tenantId        String   @map("tenant_id")
+  providerId      String   @map("provider_id") // "groq" | "gemini" | "anthropic" | "openai"
+  displayName     String   @map("display_name")
+  model           String
+  apiKeyEncrypted String?  @map("api_key_encrypted")
+  apiKeyMask      String?  @map("api_key_mask")
+  isDefault       Boolean  @default(false) @map("is_default")
+  hasServerKey    Boolean  @default(false) @map("has_server_key")
+  status          String   @default("disconnected")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, providerId])
+  @@index([tenantId])
+  @@map("provider_configs")
+}
+
+// ─── Logging ───
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  tenantId  String?  @map("tenant_id")
+  userId    String?  @map("user_id")
+  action    String
+  details   Json?
+  ip        String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+model QueryLog {
+  id           String   @id @default(uuid())
+  tenantId     String   @map("tenant_id")
+  userId       String?  @map("user_id")
+  query        String
+  confidence   Float?
+  chunksUsed   Int?     @map("chunks_used")
+  providerId   String?  @map("provider_id")
+  latencyMs    Int?     @map("latency_ms")
+  wasBlocked   Boolean  @default(false) @map("was_blocked")
+  blockReason  String?  @map("block_reason")
+  isIncognito  Boolean  @default(false) @map("is_incognito")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@map("query_logs")
+}
+
+model IncognitoSession {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  userId    String?  @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+
+  @@map("incognito_sessions")
+}
